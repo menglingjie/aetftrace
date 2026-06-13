@@ -95,8 +95,8 @@ def fetch_sse_page(stat_date: str, page_no: int) -> tuple[list[dict], int]:
         "isPagination": "true",
         "pageHelp.pageSize": SSE_PAGE_SIZE,
         "pageHelp.pageNo": page_no,
-        "pageHelp.beginPage": 1,
-        "pageHelp.endPage": 1,
+        "pageHelp.beginPage": page_no,
+        "pageHelp.endPage": page_no,
         "pageHelp.cacheSize": 1,
     }
     text = request_with_retry(SSE_API, params, headers=SSE_HEADERS)
@@ -136,12 +136,23 @@ def fetch_sse_date(stat_date: str) -> list[dict]:
     if total == 0 and not all_rows:
         return []
     total_pages = (total + SSE_PAGE_SIZE - 1) // SSE_PAGE_SIZE
+    seen: set[tuple[str, str, str]] = set()
+    unique_rows: list[dict] = []
+    for r in all_rows:
+        key = (r["date"], r["exchange"], r["code"])
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(r)
     for page in range(2, total_pages + 1):
         time.sleep(REQUEST_DELAY)
         rows, _ = fetch_sse_page(stat_date, page)
-        all_rows.extend(rows)
-    log.info("SSE %s: %d records (%d pages)", stat_date, len(all_rows), total_pages)
-    return all_rows
+        for r in rows:
+            key = (r["date"], r["exchange"], r["code"])
+            if key not in seen:
+                seen.add(key)
+                unique_rows.append(r)
+    log.info("SSE %s: %d records (%d pages)", stat_date, len(unique_rows), total_pages)
+    return unique_rows
 
 
 # ---------------------------------------------------------------------------
