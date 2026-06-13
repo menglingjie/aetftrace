@@ -24,8 +24,15 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).parent / "data"
-CSV_FILE = DATA_DIR / "etf_shares.csv"
+CSV_DIR = DATA_DIR / "etf_shares_by_month"
 CSV_HEADER = ["date", "exchange", "code", "name", "total_shares_wanfen"]
+
+
+def get_csv_path(date_str: str) -> Path:
+    """根据日期获取对应的月份CSV文件路径"""
+    month_key = date_str[:7]  # YYYY-MM
+    return CSV_DIR / f"etf_shares_{month_key}.csv"
+
 
 SSE_API = "https://query.sse.com.cn/commonQuery.do"
 SSE_HEADERS = {"Referer": "https://www.sse.com.cn/"}
@@ -214,6 +221,18 @@ def load_existing_keys(csv_path: Path) -> set[tuple[str, str, str]]:
     return keys
 
 
+def load_all_existing_keys() -> tuple[set[tuple[str, str, str]], dict[str, Path]]:
+    """加载所有月份文件的已有key，返回 (keys, month_to_path)"""
+    keys: set[tuple[str, str, str]] = set()
+    month_to_path: dict[str, Path] = {}
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
+    for f in CSV_DIR.glob("etf_shares_*.csv"):
+        month_key = f.stem.replace("etf_shares_", "")
+        month_to_path[month_key] = f
+        keys |= load_existing_keys(f)
+    return keys, month_to_path
+
+
 def append_to_csv(
     csv_path: Path, rows: list[dict], existing: set[tuple[str, str, str]]
 ):
@@ -241,9 +260,8 @@ def append_to_csv(
 # ---------------------------------------------------------------------------
 
 
-def determine_dates(csv_path: Path) -> list[str]:
+def determine_dates(existing: set[tuple[str, str, str]]) -> list[str]:
     today = today_str()
-    existing = load_existing_keys(csv_path)
     if not existing:
         start = (date.today() - timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
         log.info("No existing data, backfilling from %s to %s", start, today)
@@ -262,13 +280,12 @@ def determine_dates(csv_path: Path) -> list[str]:
 
 def main():
     log.info("=== ETF share fetcher started ===")
-    csv_path = CSV_FILE
-    dates = determine_dates(csv_path)
+    existing, _ = load_all_existing_keys()
+    dates = determine_dates(existing)
     if not dates:
         log.info("Nothing to fetch, exiting")
         return
 
-    existing = load_existing_keys(csv_path)
     total_added = 0
 
     for d in dates:
@@ -278,6 +295,7 @@ def main():
         time.sleep(REQUEST_DELAY)
         szse_rows = fetch_szse_date(d)
         all_rows = sse_rows + szse_rows
+        csv_path = get_csv_path(d)
         added = append_to_csv(csv_path, all_rows, existing)
         total_added += added
         log.info(
