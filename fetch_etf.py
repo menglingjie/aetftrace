@@ -16,6 +16,8 @@ from pathlib import Path
 
 import requests
 
+import db
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -291,7 +293,24 @@ def determine_dates(existing: set[tuple[str, str, str]]) -> list[str]:
 
 def main():
     log.info("=== ETF share fetcher started ===")
+
+    db_enabled = db._get_dsn() is not None
+    if db_enabled:
+        try:
+            db.init_db()
+            db_keys = db.load_existing_keys()
+            log.info("Loaded %d existing keys from database", len(db_keys))
+        except Exception as exc:
+            log.warning("Database unavailable, CSV-only mode: %s", exc)
+            db_enabled = False
+            db_keys = set()
+    else:
+        log.info("DATABASE_URL not set, skipping database")
+        db_keys = set()
+
     existing, _ = load_all_existing_keys()
+    existing |= db_keys
+
     dates = determine_dates(existing)
     if not dates:
         log.info("Nothing to fetch, exiting")
@@ -306,9 +325,17 @@ def main():
         time.sleep(REQUEST_DELAY)
         szse_rows = fetch_szse_date(d)
         all_rows = sse_rows + szse_rows
+
         csv_path = get_csv_path(d)
         added = append_to_csv(csv_path, all_rows, existing)
         total_added += added
+
+        if db_enabled and all_rows:
+            try:
+                db.upsert_shares(all_rows)
+            except Exception as exc:
+                log.error("Failed to write to database: %s", exc)
+
         log.info(
             "%s: added %d new records (SSE=%d, SZSE=%d)",
             d,
