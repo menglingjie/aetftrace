@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 import db
 
@@ -37,18 +39,42 @@ def get_csv_path(date_str: str) -> Path:
 
 
 SSE_API = "https://query.sse.com.cn/commonQuery.do"
-SSE_HEADERS = {"Referer": "https://www.sse.com.cn/"}
+SSE_HEADERS = {
+    "Referer": "https://www.sse.com.cn/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Connection": "keep-alive",
+}
 SSE_SQL_ID = "COMMON_SSE_ZQPZ_ETFZL_XXPL_ETFGM_SEARCH_L"
 SSE_PAGE_SIZE = 50
 
 SZSE_API = "https://www.szse.cn/api/report/ShowReport/data"
 SZSE_CATALOG = "scsj_fund_jjgm"
 SZSE_PAGE_SIZE = 50
+SZSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "https://www.szse.cn/",
+}
 
-REQUEST_DELAY = 1.0
-MAX_RETRIES = 3
+REQUEST_DELAY = 2.0
+MAX_RETRIES = 5
 RETRY_DELAY = 5.0
 HISTORY_DAYS = 30
+
+session = requests.Session()
+session.headers.update(
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    }
+)
+
+_retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+_adapter = HTTPAdapter(max_retries=_retry, pool_connections=10, pool_maxsize=10)
+session.mount("https://", _adapter)
+session.mount("http://", _adapter)
 
 
 # ---------------------------------------------------------------------------
@@ -74,13 +100,15 @@ def request_with_retry(
 ) -> str | None:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=30)
+            resp = session.get(url, params=params, headers=headers, timeout=30)
             resp.raise_for_status()
             return resp.text
         except Exception as exc:
             log.warning("Request attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY)
+                delay = RETRY_DELAY * (2 ** (attempt - 1))
+                log.info("Waiting %.0fs before retry...", delay)
+                time.sleep(delay)
     return None
 
 
@@ -174,7 +202,7 @@ def fetch_szse_page(
         "txtStart": start_date,
         "txtEnd": end_date,
     }
-    text = request_with_retry(SZSE_API, params)
+    text = request_with_retry(SZSE_API, params, headers=SZSE_HEADERS)
     if text is None:
         return [], 0
     try:
