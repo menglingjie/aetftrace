@@ -2,7 +2,7 @@ name: Fetch ETF Data
 
 on:
   schedule:
-    - cron: '0 0 * * 2-6'  # UTC 0:00 = 北京时间 08:00, 周二至周六
+    - cron: '42 23 * * 1-5'  
   workflow_dispatch:
 
 permissions:
