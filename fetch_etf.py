@@ -42,10 +42,13 @@ def get_csv_path(date_str: str) -> Path:
 
 SSE_API = "https://query.sse.com.cn/commonQuery.do"
 SSE_HEADERS = {
+    "Host": "query.sse.com.cn",
     "Referer": "https://www.sse.com.cn/",
+    "Origin": "https://www.sse.com.cn",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     "Accept": "*/*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
 }
 SSE_SQL_ID = "COMMON_SSE_ZQPZ_ETFZL_XXPL_ETFGM_SEARCH_L"
@@ -66,12 +69,18 @@ MAX_RETRIES = 5
 RETRY_DELAY = 5.0
 HISTORY_DAYS = 30
 
+PROXY_URL = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY")
+if PROXY_URL:
+    log.info("Using proxy: %s", PROXY_URL)
+
 session = requests.Session()
 session.headers.update(
     {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     }
 )
+if PROXY_URL:
+    session.proxies = {"http": PROXY_URL, "https": PROXY_URL}
 
 _retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
 _adapter = HTTPAdapter(max_retries=_retry, pool_connections=10, pool_maxsize=10)
@@ -100,6 +109,8 @@ def date_range(start: str, end: str) -> list[str]:
 def _request_curl(url: str, params: dict, headers: dict | None = None) -> str | None:
     full_url = f"{url}?{urlencode(params)}"
     cmd = ["curl", "-s", "-S", "--max-time", "30", "--compressed"]
+    if PROXY_URL:
+        cmd.extend(["--proxy", PROXY_URL])
     if headers:
         for k, v in headers.items():
             cmd.extend(["-H", f"{k}: {v}"])
@@ -368,6 +379,13 @@ def determine_dates(existing: set[tuple[str, str, str]]) -> list[str]:
 
 def main():
     log.info("=== ETF share fetcher started ===")
+
+    if not PROXY_URL:
+        log.info(
+            "TIP: SSE API (query.sse.com.cn) may block datacenter IPs. "
+            "Set PROXY_URL env var if SSE requests fail, e.g. "
+            "PROXY_URL=http://user:pass@proxy:port"
+        )
 
     db_enabled = db._get_dsn() is not None
     if db_enabled:
