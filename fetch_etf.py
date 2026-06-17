@@ -9,10 +9,12 @@ import csv
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -95,6 +97,33 @@ def date_range(start: str, end: str) -> list[str]:
     ]
 
 
+def _request_curl(url: str, params: dict, headers: dict | None = None) -> str | None:
+    full_url = f"{url}?{urlencode(params)}"
+    cmd = ["curl", "-s", "-S", "--max-time", "30", "--compressed"]
+    if headers:
+        for k, v in headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
+    cmd.append(full_url)
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+            log.warning(
+                "curl attempt %d/%d failed (rc=%d): %s",
+                attempt,
+                MAX_RETRIES,
+                result.returncode,
+                result.stderr.strip(),
+            )
+        except Exception as exc:
+            log.warning("curl attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAY * (2 ** (attempt - 1))
+            time.sleep(delay)
+    return None
+
+
 def request_with_retry(
     url: str, params: dict, headers: dict | None = None
 ) -> str | None:
@@ -109,7 +138,8 @@ def request_with_retry(
                 delay = RETRY_DELAY * (2 ** (attempt - 1))
                 log.info("Waiting %.0fs before retry...", delay)
                 time.sleep(delay)
-    return None
+    log.info("requests failed, falling back to curl")
+    return _request_curl(url, params, headers)
 
 
 # ---------------------------------------------------------------------------
@@ -307,16 +337,33 @@ def determine_dates(existing: set[tuple[str, str, str]]) -> list[str]:
         start = (date.today() - timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
         log.info("No existing data, backfilling from %s to %s", start, today)
         return date_range(start, today)
-    existing_dates = sorted({k[0] for k in existing})
-    latest = existing_dates[-1]
-    if latest >= today:
-        log.info("Data for %s already exists, nothing to do", today)
-        return []
-    start = (datetime.strptime(latest, "%Y-%m-%d").date() + timedelta(days=1)).strftime(
-        "%Y-%m-%d"
-    )
-    log.info("Resuming from %s to %s (latest existing: %s)", start, today, latest)
-    return date_range(start, today)
+
+    dates_with_sse = {k[0] for k in existing if k[1] == "SSE"}
+    dates_with_szse = {k[0] for k in existing if k[1] == "SZSE"}
+    all_existing_dates = dates_with_sse | dates_with_szse
+
+    incomplete = sorted(all_existing_dates - (dates_with_sse & dates_with_szse))
+    if incomplete:
+        log.info("Dates missing one exchange: %s", incomplete)
+
+    latest = max(all_existing_dates)
+    forward_dates: list[str] = []
+    if latest < today:
+        forward_dates = date_range(
+            (datetime.strptime(latest, "%Y-%m-%d").date() + timedelta(days=1)).strftime(
+                "%Y-%m-%d"
+            ),
+            today,
+        )
+        log.info(
+            "Resuming from %s to %s (latest existing: %s)",
+            forward_dates[0],
+            today,
+            latest,
+        )
+
+    result = sorted(set(incomplete) | set(forward_dates))
+    return result
 
 
 def main():
@@ -348,10 +395,23 @@ def main():
 
     for d in dates:
         log.info("--- Fetching date: %s ---", d)
-        time.sleep(REQUEST_DELAY)
-        sse_rows = fetch_sse_date(d)
-        time.sleep(REQUEST_DELAY)
-        szse_rows = fetch_szse_date(d)
+
+        existing_exchanges = {k[1] for k in existing if k[0] == d}
+
+        sse_rows: list[dict] = []
+        if "SSE" not in existing_exchanges:
+            time.sleep(REQUEST_DELAY)
+            sse_rows = fetch_sse_date(d)
+        else:
+            log.info("SSE data for %s already exists, skipping", d)
+
+        szse_rows: list[dict] = []
+        if "SZSE" not in existing_exchanges:
+            time.sleep(REQUEST_DELAY)
+            szse_rows = fetch_szse_date(d)
+        else:
+            log.info("SZSE data for %s already exists, skipping", d)
+
         all_rows = sse_rows + szse_rows
 
         csv_path = get_csv_path(d)
