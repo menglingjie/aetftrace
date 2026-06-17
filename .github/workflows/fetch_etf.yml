@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   fetch:
-    runs-on: self-hosted
+    # runs-on: self-hosted
+    runs-on: ubuntu-latest
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
