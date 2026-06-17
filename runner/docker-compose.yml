@@ -1,0 +1,15 @@
+services:
+  github-runner:
+    build: .
+    container_name: etf-github-runner
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - runner-work:/home/runner/_work
+      - runner-logs:/home/runner/_diag
+    # Uncomment if runner needs host network for internal services
+    # network_mode: host
+
+volumes:
+  runner-work:
+  runner-logs:
