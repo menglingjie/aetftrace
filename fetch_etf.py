@@ -66,7 +66,7 @@ SZSE_HEADERS = {
 
 REQUEST_DELAY = 2.0
 MAX_RETRIES = 5
-RETRY_DELAY = 5.0
+RETRY_DELAY = 3.0
 HISTORY_DAYS = 30
 
 PROXY_URL = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY")
@@ -82,7 +82,7 @@ session.headers.update(
 if PROXY_URL:
     session.proxies = {"http": PROXY_URL, "https": PROXY_URL}
 
-_retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+_retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 _adapter = HTTPAdapter(max_retries=_retry, pool_connections=10, pool_maxsize=10)
 session.mount("https://", _adapter)
 session.mount("http://", _adapter)
