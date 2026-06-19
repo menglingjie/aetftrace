@@ -2,7 +2,7 @@ name: Fetch ETF Data
 
 on:
   schedule:
-    - cron: '42 23 * * 1-5'  
+    - cron: '27 21 * * 1-5'  
   workflow_dispatch:
 
 permissions:
